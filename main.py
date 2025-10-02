@@ -1,4 +1,5 @@
 from fastapi import FastAPI, status, HTTPException, UploadFile, File
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from loguru import logger
 
@@ -9,7 +10,6 @@ from src.generate_batch import get_data
 from src.generate_facerender_batch import get_facerender_data
 from src.utils.init_path import init_path
 
-import base64
 import os
 
 tts_service = os.getenv("TTS_SERVER")
@@ -32,7 +32,7 @@ async def predict_image(image: UploadFile = File(...), audio: UploadFile = File(
     # Save uploaded files
     pic_path = f"/app/img/{image.filename}"
     aud_path = f"/app/aud/{audio.filename}"
-    out_path = "/app/output/result.mp4"
+    out_path = "/app/output"
 
     with open(pic_path, "wb") as f:
         f.write(await image.read())
@@ -53,13 +53,8 @@ async def predict_image(image: UploadFile = File(...), audio: UploadFile = File(
                                expression_scale=1, still_mode=True, preprocess="full")
     video_path = animate_from_coeff.generate_deploy(data, out_path, pic_path, crop_info,
                                                     enhancer="gfpgan", background_enhancer=None, preprocess="full")
-    with open(video_path, "rb") as file:
-        video_data = base64.b64encode(file.read()).decode("utf-8")
-    response = {
-        "video_base64": video_data
-    }
-
-    return response
+    
+    return FileResponse(video_path, media_type="video/mp4", filename="result.mp4")
 
 
 @app.get("/health")
