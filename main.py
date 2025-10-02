@@ -20,7 +20,7 @@ import os
 tts_service = os.getenv("TTS_SERVER")
 pic_path ="./sadtalker_default.jpeg"
 facerender_batch_size = 10
-sadtalker_paths = init_path("./checkpoints", os.path.join("/home/SadTalker", 'src/config'), "256", False, "full")
+sadtalker_paths = init_path("./checkpoints", os.path.join("/app", 'src/config'), "256", False, "full")
 
 preprocess_model = CropAndExtract(sadtalker_paths, "cuda")
 audio_to_coeff = Audio2Coeff(sadtalker_paths, "cuda")
@@ -34,16 +34,16 @@ class Words(BaseModel):
 
 @app.post("/pipeline")
 async def predict_image(items:Words):
-    save_dir = os.path.join("/home/SadTalker/results", strftime("%Y_%m_%d_%H.%M.%S"))
+    save_dir = os.path.join("/app/results", strftime("%Y_%m_%d_%H.%M.%S"))
     """
-    从语音服务器获取语音内容
+    Get audio content
     """
     try:
         tts_json = json.dumps({"text": items.words,"model_id": "zhisha"})
         tts_result = requests.post(url=tts_service,data=tts_json).json()["wav"]
         print(tts_result)
         audio_data = base64.b64decode(tts_result)
-        audio_path = "/home/SadTalker/001.wav"
+        audio_path = "/app/001.wav"
         with open(audio_path, "wb") as audio_file:
             audio_file.write(audio_data)
     except Exception as e:
