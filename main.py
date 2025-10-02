@@ -2,8 +2,6 @@ from fastapi import FastAPI, status, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from loguru import logger
 
-from time import strftime
-from time import time
 from src.utils.preprocess import CropAndExtract
 from src.test_audio2coeff import Audio2Coeff
 from src.facerender.animate_onnx import AnimateFromCoeff
@@ -11,9 +9,6 @@ from src.generate_batch import get_data
 from src.generate_facerender_batch import get_facerender_data
 from src.utils.init_path import init_path
 
-import requests
-import json
-import os, sys
 import base64
 import os
 
