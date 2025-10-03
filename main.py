@@ -13,8 +13,8 @@ from src.utils.init_path import init_path
 import os
 
 tts_service = os.getenv("TTS_SERVER")
-facerender_batch_size = 16  # Increased from 10
-sadtalker_paths = init_path("./checkpoints", os.path.join("/app", 'src/config'), "256", False, "crop")  # Increased from 10
+facerender_batch_size = 32  # Increased from 10 for better GPU utilization
+sadtalker_paths = init_path("./checkpoints", os.path.join("/app", 'src/config'), "256", False, "crop")
 
 preprocess_model = CropAndExtract(sadtalker_paths, "cuda")
 audio_to_coeff = Audio2Coeff(sadtalker_paths, "cuda")
@@ -28,7 +28,7 @@ class Words(BaseModel):
 
 
 @app.post("/pipeline")
-async def predict_image(image: UploadFile = File(...), audio: UploadFile = File(...), use_enhancer: bool = True):
+async def predict_image(image: UploadFile = File(...), audio: UploadFile = File(...), use_enhancer: bool = False):
     # Save uploaded files
     pic_path = f"/app/img/{image.filename}"
     aud_path = f"/app/aud/{audio.filename}"
