@@ -255,16 +255,17 @@ class AnimateFromCoeff():
 
         return return_path
     
-    def generate_deploy(self, x, video_save_dir, pic_path, crop_info, enhancer=None, background_enhancer=None, preprocess='crop', img_size=256):
-        # 生成Talking Face
-        # 1. 读取data中数据
+    def generate_deploy(self, x, video_save_dir, pic_path, crop_info, enhancer=None, background_enhancer=None, preprocess='crop', img_size=256, skip_background_blend=False):
+        # Generate Talking Face
+        # 1. Read in data
         source_image=x['source_image'].type(torch.FloatTensor)
         source_semantics=x['source_semantics'].type(torch.FloatTensor)
         target_semantics=x['target_semantics_list'].type(torch.FloatTensor) 
         source_image=source_image.to(self.device)
         source_semantics=source_semantics.to(self.device)
         target_semantics=target_semantics.to(self.device)
-        # 2. 转移到self.device设备上进行计算
+
+        # 2. Transfer to self.device device for calculation
         if 'yaw_c_seq' in x:
             yaw_c_seq = x['yaw_c_seq'].type(torch.FloatTensor)
             yaw_c_seq = x['yaw_c_seq'].to(self.device)
@@ -282,32 +283,36 @@ class AnimateFromCoeff():
             roll_c_seq = None
 
         frame_num = x['frame_num']
-        # 3. 生成模型的预测Talking Face视频
+
+        # 3. Generate predictions for Talking Face videos
         predictions_video = make_animation(source_image, source_semantics, target_semantics,
                                         self.generator, self.kp_extractor, self.he_estimator, self.mapping, 
                                         yaw_c_seq, pitch_c_seq, roll_c_seq, use_exp = True)
-        # 4. 形状调整与切片
+
+        # 4. Reshape and Slice
         predictions_video = predictions_video.reshape((-1,)+predictions_video.shape[2:])
         predictions_video = predictions_video[:frame_num]
-        # 5. 遍历视频每一帧并转为Numpy存储到result中
+
+        # 5. Traverse each frame of the video and convert it to Numpy and store it in result
         video = []
         for idx in range(predictions_video.shape[0]):
             image = predictions_video[idx]
             image = np.transpose(image.data.cpu().numpy(), [1, 2, 0]).astype(np.float32)
             video.append(image)
         result = img_as_ubyte(video)
-        # 6. 根据crop_info中的原始大小信息，将result中的图像按比例调整大小。
+
+        # 6. Resize the image in the result proportionally based on the original size information in crop_info.
         original_size = crop_info[0]
         if original_size:
             result = [ cv2.resize(result_i,(img_size, int(img_size * original_size[1]/original_size[0]) )) for result_i in result ]
 
-        # 7. 使用imageio库将result保存为视频文件，帧率为25。
+        # 7. Use the imageio library to save the result as a video file with a frame rate of 25.
         video_name = x['video_name']  + '.mp4'
         path = os.path.join(video_save_dir, 'temp_'+video_name)
         
         imageio.mimsave(path, result,  fps=float(25))
 
-        # 8. 输入参数x中的音频路径，并生成新的音频文件路径。
+        # 8. Takes the audio path in parameter x and generates a new audio file path
         audio_path =  x['audio_path'] 
         audio_name = os.path.splitext(os.path.split(audio_path)[-1])[0]
         new_audio_path = os.path.join(video_save_dir, audio_name+'.wav')
@@ -333,10 +338,14 @@ class AnimateFromCoeff():
                 imageio.mimsave(enhanced_path, enhanced_images_gen_with_len, fps=float(25))
             
             save_video_with_watermark(enhanced_path, new_audio_path, av_path_enhancer, watermark= False)
-            print(f'The generated video is named {video_save_dir}/{video_name_enhancer}')
+            print(f'The generated enhanced video is named {video_save_dir}/{video_name_enhancer}')
             os.remove(enhanced_path)
 
-        # full模式图像回贴
+            # If skip_background_blend is True, return enhanced video without paste_pic
+            if skip_background_blend:
+                return return_path
+
+        # full Pattern image post
         video_name_full = x['video_name']  + '_full.mp4'
         full_video_path = os.path.join(video_save_dir, video_name_full)
         paste_pic(av_path_enhancer, pic_path, crop_info, new_audio_path, full_video_path, extended_crop= True if 'ext' in preprocess.lower() else False)

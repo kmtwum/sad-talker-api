@@ -13,8 +13,8 @@ from src.utils.init_path import init_path
 import os
 
 tts_service = os.getenv("TTS_SERVER")
-facerender_batch_size = 10
-sadtalker_paths = init_path("./checkpoints", os.path.join("/app", 'src/config'), "256", False, "full")
+facerender_batch_size = 16  # Increased from 10
+sadtalker_paths = init_path("./checkpoints", os.path.join("/app", 'src/config'), "256", False, "crop")  # Increased from 10
 
 preprocess_model = CropAndExtract(sadtalker_paths, "cuda")
 audio_to_coeff = Audio2Coeff(sadtalker_paths, "cuda")
@@ -28,7 +28,7 @@ class Words(BaseModel):
 
 
 @app.post("/pipeline")
-async def predict_image(image: UploadFile = File(...), audio: UploadFile = File(...)):
+async def predict_image(image: UploadFile = File(...), audio: UploadFile = File(...), use_enhancer: bool = True):
     # Save uploaded files
     pic_path = f"/app/img/{image.filename}"
     aud_path = f"/app/aud/{audio.filename}"
@@ -39,9 +39,11 @@ async def predict_image(image: UploadFile = File(...), audio: UploadFile = File(
     with open(aud_path, "wb") as f:
         f.write(await audio.read())
 
+    preprocess_mode = "crop"  # Changed from "full"
+
     first_frame_dir = os.path.join(out_path, 'first_frame_dir')
     os.makedirs(first_frame_dir, exist_ok=True)
-    first_coeff_path, crop_pic_path, crop_info = preprocess_model.generate(pic_path, first_frame_dir, "full",
+    first_coeff_path, crop_pic_path, crop_info = preprocess_model.generate(pic_path, first_frame_dir, preprocess_mode,
                                                                            source_image_flag=True)
     ref_eyeblink_coeff_path = None
     ref_pose_coeff_path = None
@@ -50,10 +52,14 @@ async def predict_image(image: UploadFile = File(...), audio: UploadFile = File(
 
     data = get_facerender_data(coeff_path, crop_pic_path, first_coeff_path, aud_path,
                                facerender_batch_size, None, None, None,
-                               expression_scale=1, still_mode=True, preprocess="full")
-    video_path = animate_from_coeff.generate_deploy(data, out_path, pic_path, crop_info,
-                                                    enhancer="gfpgan", background_enhancer=None, preprocess="full")
-    
+                               expression_scale=1, still_mode=True, preprocess=preprocess_mode)
+    video_path = animate_from_coeff.generate_deploy(
+        data, out_path, pic_path, crop_info,
+        enhancer="gfpgan" if use_enhancer else None,
+        background_enhancer=None,
+        preprocess=preprocess_mode,
+        skip_background_blend=True)
+
     return FileResponse(video_path, media_type="video/mp4", filename="result.mp4")
 
 
