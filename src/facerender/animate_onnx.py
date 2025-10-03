@@ -324,6 +324,11 @@ class AnimateFromCoeff():
         word = word1[start_time:end_time]
         word.export(new_audio_path, format="wav")
 
+        # Set default return path
+        av_path = os.path.join(video_save_dir, video_name)
+        save_video_with_watermark(path, new_audio_path, av_path, watermark=False)
+        return_path = av_path
+
         if enhancer:
             video_name_enhancer = x['video_name']  + '_enhanced.mp4'
             enhanced_path = os.path.join(video_save_dir, 'temp_'+video_name_enhancer)
@@ -344,11 +349,21 @@ class AnimateFromCoeff():
             # If skip_background_blend is True, return enhanced video without paste_pic
             if skip_background_blend:
                 return return_path
+            
+            # Use enhanced video for paste_pic
+            source_video = av_path_enhancer
+        else:
+            # Use original video for paste_pic
+            source_video = av_path
+
+        # Skip background blend if requested
+        if skip_background_blend:
+            return return_path
 
         # full Pattern image post
         video_name_full = x['video_name']  + '_full.mp4'
         full_video_path = os.path.join(video_save_dir, video_name_full)
-        paste_pic(av_path_enhancer, pic_path, crop_info, new_audio_path, full_video_path, extended_crop= True if 'ext' in preprocess.lower() else False)
+        paste_pic(source_video, pic_path, crop_info, new_audio_path, full_video_path, extended_crop= True if 'ext' in preprocess.lower() else False)
         print(f'The generated video is named {video_save_dir}/{video_name_full}') 
         return_path = full_video_path
 
