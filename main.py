@@ -1,7 +1,8 @@
-from fastapi import FastAPI, status, HTTPException, UploadFile, File
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, status, HTTPException, UploadFile, File, Form
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from loguru import logger
+import requests
 
 from src.utils.preprocess import CropAndExtract
 from src.test_audio2coeff import Audio2Coeff
@@ -12,7 +13,7 @@ from src.utils.init_path import init_path
 
 import os
 
-tts_service = os.getenv("TTS_SERVER")
+TTS_URL = "http://tts:8000/generate"
 facerender_batch_size = 32  # Increased from 10 for better GPU utilization
 sadtalker_paths = init_path("./checkpoints", os.path.join("/app", 'src/config'), "256", False, "crop")
 
@@ -28,18 +29,39 @@ class Words(BaseModel):
 
 
 @app.post("/pipeline")
-async def predict_image(image: UploadFile = File(...), audio: UploadFile = File(...), use_enhancer: bool = False):
+async def predict_image(
+        image: UploadFile = File(...),
+        text: str = Form(...),
+        response_mode: str = Form("video"),
+        use_enhancer: bool = False):
+
     # Save uploaded files
     pic_path = f"/app/img/{image.filename}"
-    aud_path = f"/app/aud/{audio.filename}"
-    out_path = "/app/output"
-
     with open(pic_path, "wb") as f:
         f.write(await image.read())
-    with open(aud_path, "wb") as f:
-        f.write(await audio.read())
+
+    out_path = "/app/output"
 
     preprocess_mode = "crop"  # Changed from "full"
+
+    print("Generating audio...")
+    tts_response = requests.post(TTS_URL, json={"text": text})
+    tts_response.raise_for_status()
+
+    if response_mode == "audio":
+        print("Returning audio stream...")
+        # Return TTS audio stream directly
+        return StreamingResponse(
+            iter([tts_response.content]),
+            media_type="audio/wav",
+            headers={"Content-Disposition": "inline; filename=audio.wav"}
+        )
+
+    # For video mode, save TTS audio and proceed with video generation
+    print("Saving TTS audio...")
+    aud_path = f"/app/aud/tts_.wav"
+    with open(aud_path, "wb") as f:
+        f.write(tts_response.content)
 
     first_frame_dir = os.path.join(out_path, 'first_frame_dir')
     os.makedirs(first_frame_dir, exist_ok=True)
