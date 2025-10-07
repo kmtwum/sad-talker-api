@@ -2,6 +2,7 @@ from fastapi import FastAPI, status, HTTPException, UploadFile, File, Form
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from loguru import logger
+import tempfile
 import requests
 
 from src.utils.preprocess import CropAndExtract
@@ -12,10 +13,11 @@ from src.generate_facerender_batch import get_facerender_data
 from src.utils.init_path import init_path
 
 import os
+import torch
+import gc
 
-TTS_URL = "http://tts:8000/generate"
-facerender_batch_size = 32  # Increased from 10 for better GPU utilization
-sadtalker_paths = init_path("./checkpoints", os.path.join("/app", 'src/config'), "256", False, "crop")
+facerender_batch_size = 28  # Reduced to prevent OOM
+sadtalker_paths = init_path("./checkpoints", os.path.join("/app", 'src/config'), "256", False, "full")
 
 preprocess_model = CropAndExtract(sadtalker_paths, "cuda")
 audio_to_coeff = Audio2Coeff(sadtalker_paths, "cuda")
@@ -28,40 +30,69 @@ class Words(BaseModel):
     words: str
 
 
-@app.post("/pipeline")
-async def predict_image(
-        image: UploadFile = File(...),
-        text: str = Form(...),
-        response_mode: str = Form("video"),
-        use_enhancer: bool = False):
+def generate_tts(text: str, tts_preference: str = "coqui") -> str:
+    """Generate TTS audio"""
+    if tts_preference == "coqui":
+        tts_url = "http://tts:8000/generate"
+        tts_response = requests.post(tts_url, json={"text": text})
+        tts_response.raise_for_status()
+        audio_path = f"/tmp/tts_{hash(text)}.wav"
+        with open(audio_path, "wb") as f:
+            f.write(tts_response.content)
+        return audio_path
+    else:
+        from elevenlabs.client import ElevenLabs
+        api_key = os.getenv("ELEVENLABS_API_KEY")
+        voice_id = os.getenv("VOICE_ID")
 
-    # Save uploaded files
-    pic_path = f"/app/img/{image.filename}"
-    with open(pic_path, "wb") as f:
-        f.write(await image.read())
+        elevenlabs = ElevenLabs(api_key=api_key)
+        response = elevenlabs.text_to_speech.convert(
+            voice_id=voice_id,
+            output_format="mp3_22050_32",
+            text=text,
+            model_id="eleven_turbo_v2_5",
+        )
+
+        print("Saving 11 audio file...")
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f:
+            for chunk in response:
+                if chunk:
+                    f.write(chunk)
+
+        print(f"Audio file saved to {f.name}")
+
+        return f.name
+
+
+@app.post("/generate")
+async def predict_image(
+        image: UploadFile = File(None),
+        text: str = Form(...),
+        tts_preference: str = Form("coqui"),
+        audio: UploadFile = File(None),
+        use_enhancer: bool = False):
 
     out_path = "/app/output"
 
-    preprocess_mode = "crop"  # Changed from "full"
+    preprocess_mode = "full"  # Changed from "full"
 
-    print("Generating audio...")
-    tts_response = requests.post(TTS_URL, json={"text": text})
-    tts_response.raise_for_status()
+    # Save image
+    if image:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as im:
+            im.write(await image.read())
+            pic_path = im.name
+    else:
+        pic_path = "/app/img/avatar.png"
 
-    if response_mode == "audio":
-        print("Returning audio stream...")
-        # Return TTS audio stream directly
-        return StreamingResponse(
-            iter([tts_response.content]),
-            media_type="audio/wav",
-            headers={"Content-Disposition": "inline; filename=audio.wav"}
-        )
-
-    # For video mode, save TTS audio and proceed with video generation
-    print("Saving TTS audio...")
-    aud_path = f"/app/aud/tts_.wav"
-    with open(aud_path, "wb") as f:
-        f.write(tts_response.content)
+    # Save audio
+    if audio:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as au:
+            au.write(await audio.read())
+            audio_path = au.name
+    else:
+        # Generate TTS
+        audio_path = generate_tts(text, tts_preference)
 
     first_frame_dir = os.path.join(out_path, 'first_frame_dir')
     os.makedirs(first_frame_dir, exist_ok=True)
@@ -69,33 +100,29 @@ async def predict_image(
                                                                            source_image_flag=True)
     ref_eyeblink_coeff_path = None
     ref_pose_coeff_path = None
-    batch = get_data(first_coeff_path, aud_path, "cuda", ref_eyeblink_coeff_path, still=True)
+    batch = get_data(first_coeff_path, audio_path, "cuda", ref_eyeblink_coeff_path, still=True)
     coeff_path = audio_to_coeff.generate(batch, out_path, 0, ref_pose_coeff_path)
 
-    data = get_facerender_data(coeff_path, crop_pic_path, first_coeff_path, aud_path,
+    data = get_facerender_data(coeff_path, crop_pic_path, first_coeff_path, audio_path,
                                facerender_batch_size, None, None, None,
                                expression_scale=1, still_mode=True, preprocess=preprocess_mode)
-    video_path = animate_from_coeff.generate_deploy(
-        data, out_path, pic_path, crop_info,
-        enhancer="gfpgan" if use_enhancer else None,
-        background_enhancer=None,
-        preprocess=preprocess_mode,
-        skip_background_blend=True)
-
-    return FileResponse(video_path, media_type="video/mp4", filename="result.mp4")
+    try:
+        video_path = animate_from_coeff.generate_deploy(
+            data, out_path, pic_path, crop_info,
+            enhancer="gfpgan" if use_enhancer else None,
+            background_enhancer=None,
+            preprocess=preprocess_mode,
+            skip_background_blend=True)
+        
+        return FileResponse(video_path, media_type="video/mp4", filename="result.mp4")
+    
+    finally:
+        # Clear GPU memory after each request
+        torch.cuda.empty_cache()
+        gc.collect()
 
 
 @app.get("/health")
-async def health_check():
-    try:
-        logger.info("health 200")
-        return status.HTTP_200_OK
-
-    except:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST)
-
-
-@app.get("/health/inference")
 async def health_check():
     try:
         logger.info("health 200")
