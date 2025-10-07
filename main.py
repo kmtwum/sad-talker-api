@@ -24,7 +24,8 @@ audio_to_coeff = Audio2Coeff(sadtalker_paths, "cuda")
 animate_from_coeff = AnimateFromCoeff(sadtalker_paths, "cuda")
 
 app = FastAPI()
-
+from dotenv import load_dotenv
+load_dotenv()
 
 class Words(BaseModel):
     words: str
