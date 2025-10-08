@@ -5,6 +5,7 @@ from loguru import logger
 import tempfile
 import requests
 
+from src.facerender.pirender_animate import AnimateFromCoeff_PIRender
 from src.utils.preprocess import CropAndExtract
 from src.test_audio2coeff import Audio2Coeff
 from src.facerender.animate_onnx import AnimateFromCoeff
@@ -22,7 +23,8 @@ sadtalker_paths = init_path("./checkpoints", os.path.join("/app", 'src/config'),
 
 preprocess_model = CropAndExtract(sadtalker_paths, "cuda")
 audio_to_coeff = Audio2Coeff(sadtalker_paths, "cuda")
-animate_from_coeff = AnimateFromCoeff(sadtalker_paths, "cuda")
+# animate_from_coeff = AnimateFromCoeff(sadtalker_paths, "cuda")
+animate_from_coeff = AnimateFromCoeff_PIRender(sadtalker_paths, "cuda")
 
 app = FastAPI()
 from dotenv import load_dotenv
@@ -86,6 +88,7 @@ async def predict_image(
         text: str = Form(...),
         user_id: str = Form(...),
         tts_preference: str = Form("elevenlabs"),
+        render_model: str = Form("pirender"),
         use_enhancer: bool = False):
     out_path = f"/app/output/{user_id}"
     os.makedirs(out_path, exist_ok=True)
@@ -116,12 +119,15 @@ async def predict_image(
     first_coeff_path, crop_pic_path, crop_info = preprocess_model.generate(pic_path, meta_dir, preprocess_mode)
     ref_eyeblink_coeff_path = None
     ref_pose_coeff_path = None
+
+    # audio2coeff
     batch = get_data(first_coeff_path, audio_path, "cuda", ref_eyeblink_coeff_path, still=True)
     coeff_path = audio_to_coeff.generate(batch, out_path, 0, ref_pose_coeff_path)
 
+    # coeff2video
     data = get_facerender_data(coeff_path, crop_pic_path, first_coeff_path, audio_path,
                                facerender_batch_size, None, None, None,
-                               expression_scale=1, still_mode=True, preprocess=preprocess_mode)
+                               expression_scale=1, still_mode=True, preprocess=preprocess_mode, facemodel=render_model)
     video_path = animate_from_coeff.generate_deploy(
         data, out_path, pic_path, crop_info,
         enhancer="gfpgan" if use_enhancer else None,
