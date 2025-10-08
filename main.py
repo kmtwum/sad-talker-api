@@ -1,4 +1,4 @@
-from fastapi import FastAPI, status, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, status, HTTPException, UploadFile, File, Form, BackgroundTasks
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from loguru import logger
@@ -26,6 +26,17 @@ animate_from_coeff = AnimateFromCoeff(sadtalker_paths, "cuda")
 app = FastAPI()
 from dotenv import load_dotenv
 load_dotenv()
+
+
+def cleanup_files(temp_files: list):
+    """Background task to clean up files after a response is sent"""
+    for temp_file in temp_files:
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+
+    torch.cuda.empty_cache()
+    gc.collect()
+
 
 class Words(BaseModel):
     words: str
@@ -68,15 +79,17 @@ def generate_tts(text: str, tts_preference: str = "coqui") -> str:
 
 @app.post("/generate")
 async def predict_image(
-        image: UploadFile = File(None),
+        background_tasks: BackgroundTasks,
         text: str = Form(...),
         tts_preference: str = Form("coqui"),
         audio: UploadFile = File(None),
         use_enhancer: bool = False):
 
-    out_path = "/app/output"
+    preprocess_mode = "full"
+    temp_files = []
 
-    preprocess_mode = "full"  # Changed from "full"
+    # Create session
+    session_id = uuid.uuid4()
 
     # Save image
     if image:
@@ -86,14 +99,9 @@ async def predict_image(
     else:
         pic_path = "/app/img/avatar.png"
 
-    # Save audio
-    if audio:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as au:
-            au.write(await audio.read())
-            audio_path = au.name
-    else:
-        # Generate TTS
-        audio_path = generate_tts(text, tts_preference)
+    # Generate TTS
+    audio_path = generate_tts(text, tts_preference, out_path, str(session_id))
+    temp_files.append(audio_path)
 
     first_frame_dir = os.path.join(out_path, 'first_frame_dir')
     os.makedirs(first_frame_dir, exist_ok=True)
@@ -107,20 +115,28 @@ async def predict_image(
     data = get_facerender_data(coeff_path, crop_pic_path, first_coeff_path, audio_path,
                                facerender_batch_size, None, None, None,
                                expression_scale=1, still_mode=True, preprocess=preprocess_mode)
-    try:
-        video_path = animate_from_coeff.generate_deploy(
-            data, out_path, pic_path, crop_info,
-            enhancer="gfpgan" if use_enhancer else None,
-            background_enhancer=None,
-            preprocess=preprocess_mode,
-            skip_background_blend=True)
-        
-        return FileResponse(video_path, media_type="video/mp4", filename="result.mp4")
-    
-    finally:
-        # Clear GPU memory after each request
-        torch.cuda.empty_cache()
-        gc.collect()
+    video_path = animate_from_coeff.generate_deploy(
+        data, out_path, pic_path, crop_info,
+        enhancer="gfpgan" if use_enhancer else None,
+        background_enhancer=None,
+        preprocess=preprocess_mode,
+        skip_background_blend=True)
+
+    populate_temp_files(temp_files, out_path, str(session_id))
+
+    # Schedule cleanup after the response is sent
+    background_tasks.add_task(cleanup_files, temp_files)
+
+    return FileResponse(video_path, media_type="video/mp4", filename="result.mp4")
+
+
+def populate_temp_files(temp_files: list, out_path, session_id: str):
+    temp_files.append(f"{out_path}/coeff##{session_id}.wav")
+    temp_files.append(f"{out_path}/{session_id}.wav")
+    temp_files.append(f"{out_path}/coeff##{session_id}.txt")
+    temp_files.append(f"{out_path}/coeff##{session_id}.mat")
+    temp_files.append(f"{out_path}/coeff##{session_id}.mp4")
+    temp_files.append(f"{out_path}/temp_coeff##{session_id}.mp4")
 
 
 @app.get("/health")
