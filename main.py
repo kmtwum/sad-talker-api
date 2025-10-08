@@ -15,8 +15,9 @@ from src.utils.init_path import init_path
 import os
 import torch
 import gc
+import uuid
 
-facerender_batch_size = 28  # Reduced to prevent OOM
+facerender_batch_size = 32  # Reduced to prevent OOM
 sadtalker_paths = init_path("./checkpoints", os.path.join("/app", 'src/config'), "256", False, "full")
 
 preprocess_model = CropAndExtract(sadtalker_paths, "cuda")
@@ -25,6 +26,7 @@ animate_from_coeff = AnimateFromCoeff(sadtalker_paths, "cuda")
 
 app = FastAPI()
 from dotenv import load_dotenv
+
 load_dotenv()
 
 
@@ -42,13 +44,14 @@ class Words(BaseModel):
     words: str
 
 
-def generate_tts(text: str, tts_preference: str = "coqui") -> str:
+def generate_tts(text: str, tts_preference: str, out_path: str, session_id: str):
     """Generate TTS audio"""
     if tts_preference == "coqui":
         tts_url = "http://tts:8000/generate"
-        tts_response = requests.post(tts_url, json={"text": text})
+        tts_response = requests.post(tts_url,
+                                     json={"text": text, "model": "tts_models/multilingual/multi-dataset/xtts_v2"})
         tts_response.raise_for_status()
-        audio_path = f"/tmp/tts_{hash(text)}.wav"
+        audio_path = f"{out_path}/{session_id}.wav"
         with open(audio_path, "wb") as f:
             f.write(tts_response.content)
         return audio_path
@@ -65,25 +68,27 @@ def generate_tts(text: str, tts_preference: str = "coqui") -> str:
             model_id="eleven_turbo_v2_5",
         )
 
-        print("Saving 11 audio file...")
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f:
+        print("Saving audio file...")
+        audio_path = f"{out_path}/{session_id}.mp3"
+        with open(audio_path, "wb") as f:
             for chunk in response:
                 if chunk:
                     f.write(chunk)
 
-        print(f"Audio file saved to {f.name}")
+        print(f"Audio file saved to {audio_path}")
 
-        return f.name
+        return audio_path
 
 
 @app.post("/generate")
 async def predict_image(
         background_tasks: BackgroundTasks,
         text: str = Form(...),
-        tts_preference: str = Form("coqui"),
-        audio: UploadFile = File(None),
+        user_id: str = Form(...),
+        tts_preference: str = Form("elevenlabs"),
         use_enhancer: bool = False):
+    out_path = f"/app/output/{user_id}"
+    os.makedirs(out_path, exist_ok=True)
 
     preprocess_mode = "full"
     temp_files = []
@@ -92,10 +97,13 @@ async def predict_image(
     session_id = uuid.uuid4()
 
     # Save image
-    if image:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as im:
-            im.write(await image.read())
-            pic_path = im.name
+    if user_id:
+        pic_path = f"/app/img/{user_id}.jpg"
+        if not os.path.exists(pic_path):
+            # create new image from default avatar
+            with open("/app/img/avatar.png", "rb") as f:
+                with open(pic_path, "wb") as f2:
+                    f2.write(f.read())
     else:
         pic_path = "/app/img/avatar.png"
 
@@ -103,10 +111,9 @@ async def predict_image(
     audio_path = generate_tts(text, tts_preference, out_path, str(session_id))
     temp_files.append(audio_path)
 
-    first_frame_dir = os.path.join(out_path, 'first_frame_dir')
-    os.makedirs(first_frame_dir, exist_ok=True)
-    first_coeff_path, crop_pic_path, crop_info = preprocess_model.generate(pic_path, first_frame_dir, preprocess_mode,
-                                                                           source_image_flag=True)
+    meta_dir = os.path.join(out_path, 'meta')
+    os.makedirs(meta_dir, exist_ok=True)
+    first_coeff_path, crop_pic_path, crop_info = preprocess_model.generate(pic_path, meta_dir, preprocess_mode)
     ref_eyeblink_coeff_path = None
     ref_pose_coeff_path = None
     batch = get_data(first_coeff_path, audio_path, "cuda", ref_eyeblink_coeff_path, still=True)
