@@ -61,39 +61,23 @@ class CropAndExtract():
         self.lm3d_std = load_lm3d(sadtalker_path['dir_of_BFM_fitting'])
         self.device = device
 
-    def generate(self, input_path, save_dir, crop_or_resize='crop', source_image_flag=False, pic_size=256):
+    def generate(self, input_path, meta_dir, crop_or_resize, pic_size=256):
 
-        pic_name = os.path.splitext(os.path.split(input_path)[-1])[0]
-
-        landmarks_path = os.path.join(save_dir, pic_name + '_landmarks.txt')
-        coeff_path = os.path.join(save_dir, pic_name + '.mat')
-        png_path = os.path.join(save_dir, pic_name + '.png')
+        landmarks_path = os.path.join(meta_dir, 'landmarks.txt')
+        coeff_path = os.path.join(meta_dir, 'coeff.mat')
+        png_path = os.path.join(meta_dir, 'avatar.png')
 
         # load input
         if not os.path.isfile(input_path):
             raise ValueError('input_path must be a valid path to video/image file')
-        elif input_path.split('.')[-1] in ['jpg', 'png', 'jpeg']:
-            # loader for first frame
-            full_frames = [cv2.imread(input_path)]
-            fps = 25
         else:
-            # loader for videos
-            video_stream = cv2.VideoCapture(input_path)
-            fps = video_stream.get(cv2.CAP_PROP_FPS)
-            full_frames = []
-            while 1:
-                still_reading, frame = video_stream.read()
-                if not still_reading:
-                    video_stream.release()
-                    break
-                full_frames.append(frame)
-                if source_image_flag:
-                    break
+            full_frames = [cv2.imread(input_path)]
 
         x_full_frames = [cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) for frame in full_frames]
 
         #### crop images as the 
         if 'crop' in crop_or_resize.lower():  # default crop
+            print('Using default crop mode.')
             x_full_frames, crop, quad = self.propress.crop(x_full_frames,
                                                            still=True if 'ext' in crop_or_resize.lower() else False,
                                                            xsize=512)
@@ -103,15 +87,17 @@ class CropAndExtract():
             oy1, oy2, ox1, ox2 = cly + ly, cly + ry, clx + lx, clx + rx
             crop_info = ((ox2 - ox1, oy2 - oy1), crop, quad)
         elif 'full' in crop_or_resize.lower():
+            print('Using full image mode.')
             x_full_frames, crop, quad = self.propress.crop(x_full_frames,
                                                            still=True if 'ext' in crop_or_resize.lower() else False,
-                                                           xsize=512)
+                                                           xsize=pic_size)
             clx, cly, crx, cry = crop
             lx, ly, rx, ry = quad
             lx, ly, rx, ry = int(lx), int(ly), int(rx), int(ry)
             oy1, oy2, ox1, ox2 = cly + ly, cly + ry, clx + lx, clx + rx
             crop_info = ((ox2 - ox1, oy2 - oy1), crop, quad)
         else:  # resize mode
+            print('Using resize mode.')
             oy1, oy2, ox1, ox2 = 0, x_full_frames[0].shape[0], 0, x_full_frames[0].shape[1]
             crop_info = ((ox2 - ox1, oy2 - oy1), None, None)
 
@@ -133,7 +119,8 @@ class CropAndExtract():
             lm = lm.reshape([len(x_full_frames), -1, 2])
 
         if not os.path.isfile(coeff_path):
-            # load 3dmm paramter generator from Deep3DFaceRecon_pytorch 
+            print(f'Extracting 3dmm params into {coeff_path}')
+            # load 3dmm parameter generator from Deep3DFaceRecon_pytorch
             video_coeffs, full_coeffs = [], []
             for idx in tqdm(range(len(frames_pil)), desc='3DMM Extraction In Video:'):
                 frame = frames_pil[idx]
@@ -172,5 +159,7 @@ class CropAndExtract():
             semantic_npy = np.array(video_coeffs)[:, 0]
 
             savemat(coeff_path, {'coeff_3dmm': semantic_npy, 'full_3dmm': np.array(full_coeffs)[0]})
+        else:
+            print(' Using saved coeffs.')
 
         return coeff_path, png_path, crop_info
