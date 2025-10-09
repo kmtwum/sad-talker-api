@@ -2,7 +2,6 @@ from fastapi import FastAPI, status, HTTPException, UploadFile, File, Form, Back
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from loguru import logger
-import tempfile
 import requests
 
 from src.utils.preprocess import CropAndExtract
@@ -144,6 +143,17 @@ def populate_temp_files(temp_files: list, out_path, session_id: str):
     temp_files.append(f"{out_path}/coeff##{session_id}.mat")
     temp_files.append(f"{out_path}/coeff##{session_id}.mp4")
     temp_files.append(f"{out_path}/temp_coeff##{session_id}.mp4")
+
+
+@app.post("/presave-photo")
+async def upload_photo(user_id: str = Form(...), image: UploadFile = File(...)):
+    os.makedirs("/app/img", exist_ok=True)
+    pic_path = f"/app/img/{user_id}.jpg"
+
+    with open(pic_path, "wb") as f:
+        f.write(await image.read())
+
+    return {"message": "Photo uploaded successfully", "user_id": user_id}
 
 
 @app.get("/health")
