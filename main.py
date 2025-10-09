@@ -128,7 +128,7 @@ async def predict_image(
         preprocess=preprocess_mode,
         skip_background_blend=True)
 
-    populate_temp_files(temp_files, out_path, str(session_id))
+    populate_temp_files(temp_files, out_path, user_id, str(session_id))
 
     # Schedule cleanup after the response is sent
     background_tasks.add_task(cleanup_files, temp_files)
@@ -136,13 +136,17 @@ async def predict_image(
     return FileResponse(video_path, media_type="video/mp4", filename="result.mp4")
 
 
-def populate_temp_files(temp_files: list, out_path, session_id: str):
+def populate_temp_files(temp_files: list, out_path, user_id, session_id: str):
     temp_files.append(f"{out_path}/coeff##{session_id}.wav")
     temp_files.append(f"{out_path}/{session_id}.wav")
     temp_files.append(f"{out_path}/coeff##{session_id}.txt")
     temp_files.append(f"{out_path}/coeff##{session_id}.mat")
     temp_files.append(f"{out_path}/coeff##{session_id}.mp4")
     temp_files.append(f"{out_path}/temp_coeff##{session_id}.mp4")
+    temp_files.append(f"{out_path}/temp_{user_id}##{session_id}.mp4")
+    temp_files.append(f"{out_path}/{user_id}##{session_id}.txt")
+    temp_files.append(f"{out_path}/{user_id}##{session_id}.mp4")
+    temp_files.append(f"{out_path}/{user_id}##{session_id}.mat")
 
 
 @app.post("/presave-photo")
