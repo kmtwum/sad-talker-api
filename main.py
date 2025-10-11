@@ -97,12 +97,21 @@ async def predict_image(
 
     # Save image
     if user_id:
-        pic_path = f"/app/img/{user_id}.jpg"
-        if not os.path.exists(pic_path):
-            # create new image from default avatar
-            with open("/app/img/avatar.png", "rb") as f:
-                with open(pic_path, "wb") as f2:
-                    f2.write(f.read())
+        img_path = f"/app/user_img/{user_id}.jpg"
+        if not os.path.exists(img_path):
+            # download image from url
+            print("Downloading image...")
+            try:
+                gcp_base = get_secret_key("GCP_BASE_FILE")
+                print(f"GCP Base: {gcp_base}")
+                response = requests.get(f"{gcp_base}/{user_id}")
+                response.raise_for_status()
+                print("Image downloaded successfully!")
+                with open(img_path, "wb") as f:
+                    f.write(response.content)
+            except Exception as e:
+                print(f"Error downloading image: {e}")
+                img_path = "/app/img/avatar.jpg"
     else:
         pic_path = "/app/img/avatar.png"
 
@@ -112,7 +121,7 @@ async def predict_image(
 
     meta_dir = os.path.join(out_path, 'meta')
     os.makedirs(meta_dir, exist_ok=True)
-    first_coeff_path, crop_pic_path, crop_info = preprocess_model.generate(pic_path, meta_dir, preprocess_mode)
+    first_coeff_path, crop_pic_path, crop_info = preprocess_model.generate(img_path, meta_dir, preprocess_mode)
     ref_eyeblink_coeff_path = None
     ref_pose_coeff_path = None
     batch = get_data(first_coeff_path, audio_path, "cuda", ref_eyeblink_coeff_path, still=True)
@@ -122,7 +131,7 @@ async def predict_image(
                                facerender_batch_size, None, None, None,
                                expression_scale=1, still_mode=True, preprocess=preprocess_mode)
     video_path = animate_from_coeff.generate_deploy(
-        data, out_path, pic_path, crop_info,
+        data, out_path, img_path, crop_info,
         enhancer="gfpgan" if use_enhancer else None,
         background_enhancer=None,
         preprocess=preprocess_mode,
@@ -151,10 +160,10 @@ def populate_temp_files(temp_files: list, out_path, user_id, session_id: str):
 
 @app.post("/presave-photo")
 async def upload_photo(user_id: str = Form(...), image: UploadFile = File(...)):
-    os.makedirs("/app/img", exist_ok=True)
-    pic_path = f"/app/img/{user_id}.jpg"
+    os.makedirs("/app/user_img", exist_ok=True)
+    img_path = f"/app/user_img/{user_id}.jpg"
 
-    with open(pic_path, "wb") as f:
+    with open(img_path, "wb") as f:
         f.write(await image.read())
 
     return {"message": "Photo uploaded successfully", "user_id": user_id}
