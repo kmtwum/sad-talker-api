@@ -56,7 +56,7 @@ def generate_tts(text: str, tts_preference: str, out_path: str, session_id: str)
         return audio_path
     else:
         from elevenlabs.client import ElevenLabs
-        api_key = os.getenv("ELEVENLABS_API_KEY")
+        api_key = get_secret_key("ELEVENLABS_API_KEY_FILE")
         voice_id = os.getenv("VOICE_ID")
 
         elevenlabs = ElevenLabs(api_key=api_key)
@@ -85,6 +85,7 @@ async def predict_image(
         text: str = Form(...),
         user_id: str = Form(...),
         tts_preference: str = Form("elevenlabs"),
+        stream: bool = Form(True),
         use_enhancer: bool = False):
     out_path = f"/app/output/{user_id}"
     os.makedirs(out_path, exist_ok=True)
@@ -113,7 +114,7 @@ async def predict_image(
                 print(f"Error downloading image: {e}")
                 img_path = "/app/img/avatar.jpg"
     else:
-        pic_path = "/app/img/avatar.png"
+        img_path = "/app/img/avatar.png"
 
     # Generate TTS
     audio_path = generate_tts(text, tts_preference, out_path, str(session_id))
@@ -143,6 +144,15 @@ async def predict_image(
     background_tasks.add_task(cleanup_files, temp_files)
 
     return FileResponse(video_path, media_type="video/mp4", filename="result.mp4")
+
+
+def get_secret_key(secret):
+    key_file = os.getenv(secret)
+    if key_file:
+        with open(key_file, 'r') as f:
+            api_key = f.read().strip()
+            return api_key
+    return None
 
 
 def populate_temp_files(temp_files: list, out_path, user_id, session_id: str):
