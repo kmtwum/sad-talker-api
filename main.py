@@ -104,7 +104,6 @@ async def predict_image(
             print("Downloading image...")
             try:
                 gcp_base = get_secret_key("GCP_BASE_FILE")
-                print(f"GCP Base: {gcp_base}")
                 response = requests.get(f"{gcp_base}/{user_id}")
                 response.raise_for_status()
                 print("Image downloaded successfully!")
