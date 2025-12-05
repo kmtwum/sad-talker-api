@@ -43,12 +43,18 @@ class Words(BaseModel):
     words: str
 
 
-def generate_tts(text: str, tts_preference: str, out_path: str, session_id: str):
+def generate_tts(text: str, tts_preference: str, out_path: str, session_id: str, user_id: str = None,
+                 voice_source: str = None):
     """Generate TTS audio"""
     if tts_preference == "coqui":
         tts_url = "http://tts:8000/generate"
-        tts_response = requests.post(tts_url,
-                                     json={"text": text, "model": "tts_models/multilingual/multi-dataset/xtts_v2"})
+        tts_response = requests.post(tts_url, json={
+            "text": text,
+            "split_sentences": False,
+            "source_aud": voice_source,
+            "clone": user_id,
+            "model": "tts_models/multilingual/multi-dataset/xtts_v2"
+        })
         tts_response.raise_for_status()
         audio_path = f"{out_path}/{session_id}.wav"
         with open(audio_path, "wb") as f:
@@ -84,8 +90,9 @@ async def predict_image(
         background_tasks: BackgroundTasks,
         text: str = Form(...),
         user_id: str = Form(...),
-        tts_preference: str = Form("elevenlabs"),
-        stream: bool = Form(True),
+        tts_preference: str = Form("coqui"),
+        source_img: str = Form(None),
+        source_aud: str = Form(None),
         use_enhancer: bool = False):
     out_path = f"/app/output/{user_id}"
     os.makedirs(out_path, exist_ok=True)
@@ -104,7 +111,7 @@ async def predict_image(
             print("Downloading image...")
             try:
                 gcp_base = get_secret_key("GCP_BASE_FILE")
-                response = requests.get(f"{gcp_base}/{user_id}")
+                response = requests.get(f"{gcp_base}/{source_img}")
                 response.raise_for_status()
                 print("Image downloaded successfully!")
                 with open(img_path, "wb") as f:
@@ -116,7 +123,7 @@ async def predict_image(
         img_path = "/app/img/avatar.png"
 
     # Generate TTS
-    audio_path = generate_tts(text, tts_preference, out_path, str(session_id))
+    audio_path = generate_tts(text, tts_preference, out_path, str(session_id), user_id=user_id, voice_source=source_aud)
     temp_files.append(audio_path)
 
     meta_dir = os.path.join(out_path, 'meta')
